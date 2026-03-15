@@ -1,163 +1,258 @@
 // src/screens/profile/ProfileScreen.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Animated, ActivityIndicator, Alert,
-  StatusBar, Switch,
+  StatusBar, Switch, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import useAuthStore from '../../store/authStore';
-import { colors, fonts, spacing, radius, shadows } from '../../theme';
-import { updateProfile, getProfile } from '../../api/social';
+import useThemeStore from '../../store/themeStore';
+import { useTheme } from '../../theme/tokens';
+import { fonts } from '../../theme';
+import { updateProfile, getAcceptedFriends } from '../../api/social';
 import { getReminders } from '../../api/reminders';
-import { getAcceptedFriends } from '../../api/social';
 
-// ── Avatar ────────────────────────────────────────────────────────────────────
-function BigAvatar({ name, size = 88 }) {
-  const initials = name?.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '?';
-  const hue = name
-    ? (name.charCodeAt(0) * 53 + (name.charCodeAt(name.length - 1) || 0) * 17) % 360
-    : 140;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function avatarHue(name) {
+  if (!name) return 140;
+  return (name.charCodeAt(0) * 53 + (name.charCodeAt(name.length - 1) || 0) * 17) % 360;
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function Avatar({ name, size = 88, C }) {
+  const initials = name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
+  const hue = avatarHue(name);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.04, duration: 1800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1,    duration: 1800, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
+
   return (
-    <View style={{
-      width: size, height: size, borderRadius: size / 2,
-      backgroundColor: `hsl(${hue},35%,82%)`,
-      alignItems: 'center', justifyContent: 'center',
-      borderWidth: 3, borderColor: colors.bg,
-    }}>
-      <Text style={{ fontFamily: fonts.serifBold, fontSize: size * 0.36, color: `hsl(${hue},42%,34%)` }}>
-        {initials}
-      </Text>
-    </View>
+    <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+      <View style={{
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: `hsla(${hue},60%,55%,0.2)`,
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: `hsla(${hue},60%,65%,0.5)`,
+        shadowColor: `hsl(${hue},60%,55%)`,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.5,
+        shadowRadius: 16,
+        elevation: 8,
+      }}>
+        <Text style={{ fontFamily: fonts.serifBold, fontSize: size * 0.36, color: `hsl(${hue},70%,75%)` }}>
+          {initials}
+        </Text>
+      </View>
+    </Animated.View>
   );
 }
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ icon, value, label, color }) {
+function StatPill({ icon, value, label, color, C }) {
+  const countAnim = useRef(new Animated.Value(0)).current;
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    if (value == null) return;
+    countAnim.addListener(({ value: v }) => setDisplay(Math.round(v)));
+    Animated.timing(countAnim, { toValue: value, duration: 800, useNativeDriver: false }).start();
+    return () => countAnim.removeAllListeners();
+  }, [value]);
+
   return (
-    <View style={sc.card}>
-      <View style={[sc.iconWrap, { backgroundColor: color + '18' }]}>
+    <View style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+      <View style={[pill.icon, { backgroundColor: color + '20' }]}>
         <Ionicons name={icon} size={18} color={color} />
       </View>
-      <Text style={sc.value}>{value ?? '—'}</Text>
-      <Text style={sc.label}>{label}</Text>
+      <Text style={[pill.val, { color: C.ink }]}>
+        {value == null ? '—' : display}
+      </Text>
+      <Text style={[pill.lbl, { color: C.inkDim }]}>{label}</Text>
     </View>
   );
 }
+const pill = StyleSheet.create({
+  icon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  val:  { fontFamily: fonts.serifBold, fontSize: 24, letterSpacing: -0.8 },
+  lbl:  { fontFamily: fonts.sans, fontSize: 11 },
+});
 
-// ── Section ───────────────────────────────────────────────────────────────────
-function Section({ title, children }) {
+function Field({ label, icon, value, onChange, multiline, placeholder, C, editable = true }) {
+  const [focused, setFocused] = useState(false);
   return (
-    <View style={sec.wrap}>
-      <Text style={sec.title}>{title}</Text>
-      <View style={sec.card}>{children}</View>
+    <View style={{ marginBottom: 14 }}>
+      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 11, color: C.inkMid, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
+        {label}
+      </Text>
+      <View style={[
+        fld.wrap,
+        { backgroundColor: C.surfaceHigh, borderColor: focused ? C.sage : C.border },
+      ]}>
+        <Ionicons name={icon} size={16} color={focused ? C.sage : C.inkDim} style={{ marginLeft: 14 }} />
+        <TextInput
+          style={[fld.input, { color: C.ink, height: multiline ? 80 : 46, textAlignVertical: multiline ? 'top' : 'center' }]}
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor={C.inkDim}
+          multiline={multiline}
+          editable={editable}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          paddingTop={multiline ? 12 : 0}
+        />
+      </View>
     </View>
   );
 }
+const fld = StyleSheet.create({
+  wrap:  { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
+  input: { flex: 1, fontFamily: fonts.sans, fontSize: 15, paddingHorizontal: 12 },
+});
 
-// ── Menu row ──────────────────────────────────────────────────────────────────
-function MenuRow({ icon, label, value, onPress, color, isLast, rightElement, danger }) {
+function SettingRow({ icon, label, subtitle, color, value, onPress, rightEl, isLast, C, danger }) {
+  const [pressed, setPressed] = useState(false);
   return (
     <TouchableOpacity
-      style={[mr.row, !isLast && mr.rowBorder]}
+      style={[
+        row.wrap,
+        { backgroundColor: pressed ? C.surfaceHigh : 'transparent' },
+        !isLast && { borderBottomWidth: 1, borderBottomColor: C.border },
+      ]}
       onPress={onPress}
-      activeOpacity={onPress ? 0.65 : 1}
-      disabled={!onPress && !rightElement}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      activeOpacity={1}
+      disabled={!onPress && !rightEl}
     >
-      <View style={[mr.iconWrap, { backgroundColor: (color || colors.textSecondary) + '15' }]}>
-        <Ionicons name={icon} size={17} color={color || colors.textSecondary} />
+      <View style={[row.icon, { backgroundColor: (color || C.inkDim) + '18' }]}>
+        <Ionicons name={icon} size={17} color={color || C.inkDim} />
       </View>
-      <Text style={[mr.label, danger && { color: colors.error }]}>{label}</Text>
-      <View style={mr.right}>
-        {rightElement ? rightElement : (
+      <View style={{ flex: 1, gap: 1 }}>
+        <Text style={[row.label, { color: danger ? C.rose : C.ink }]}>{label}</Text>
+        {subtitle && <Text style={[row.sub, { color: C.inkDim }]}>{subtitle}</Text>}
+      </View>
+      <View style={row.right}>
+        {rightEl ? rightEl : (
           <>
-            {value !== undefined && <Text style={mr.value}>{value}</Text>}
-            {onPress && <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />}
+            {value !== undefined && <Text style={[row.value, { color: C.inkMid }]}>{value}</Text>}
+            {onPress && <Ionicons name="chevron-forward" size={15} color={C.inkDim} />}
           </>
         )}
       </View>
     </TouchableOpacity>
   );
 }
+const row = StyleSheet.create({
+  wrap:  { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
+  icon:  { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  label: { fontFamily: fonts.sansMedium, fontSize: 15 },
+  sub:   { fontFamily: fonts.sans, fontSize: 12 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  value: { fontFamily: fonts.sans, fontSize: 13 },
+});
 
-// ── Edit field ────────────────────────────────────────────────────────────────
-function EditField({ label, value, onChangeText, multiline, placeholder, icon }) {
-  const [focused, setFocused] = useState(false);
+function SectionCard({ title, children, C }) {
   return (
-    <View style={ef.wrap}>
-      <Text style={ef.label}>{label}</Text>
-      <View style={[ef.inputWrap, focused && ef.inputFocused]}>
-        {icon && <Ionicons name={icon} size={16} color={focused ? colors.primary : colors.textMuted} style={{ marginLeft: 12 }} />}
-        <TextInput
-          style={[ef.input, multiline && { height: 80, textAlignVertical: 'top', paddingTop: 12 }]}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder || label}
-          placeholderTextColor={colors.textMuted}
-          multiline={multiline}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-        />
+    <View style={{ marginBottom: 20 }}>
+      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 11, color: C.inkDim, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+        {title}
+      </Text>
+      <View style={{ backgroundColor: C.surface, borderRadius: 18, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+        {children}
       </View>
     </View>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-export default function ProfileScreen() {
-  const insets      = useSafeAreaInsets();
-  const user        = useAuthStore((s) => s.user);
-  const updateUser  = useAuthStore((s) => s.updateUser);
-  const doLogout    = useAuthStore((s) => s.logout);
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+export default function ProfileScreen({ navigation }) {
+  const insets     = useSafeAreaInsets();
+  const user       = useAuthStore(s => s.user);
+  const updateUser = useAuthStore(s => s.updateUser);
+  const doLogout   = useAuthStore(s => s.logout);
 
+  const { C, isDark } = useTheme();
+  const toggleTheme   = useThemeStore(s => s.toggle);
+  const [notifs,      setNotifs]      = useState(true);
   const [editing,     setEditing]     = useState(false);
   const [saving,      setSaving]      = useState(false);
-  const [stats,       setStats]       = useState({ reminders: null, friends: null, completed: null });
-  const [notifEnabled,setNotifEnabled]= useState(true);
+  const [loadingStats,setLoadingStats]= useState(true);
+  const [stats,       setStats]       = useState({ reminders: null, completed: null, friends: null, streak: null });
   const [form,        setForm]        = useState({
     name:  user?.name  || '',
     email: user?.email || '',
-    bio:   user?.bio   || user?.description || '',
+    bio:   user?.bio || user?.description || '',
     phone: user?.phone || '',
   });
 
-  // Animate edit panel
-  const editAnim = useRef(new Animated.Value(0)).current;
+  
+
+  // Edit panel animation
+  const editH   = useRef(new Animated.Value(0)).current;
+  const editOp  = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    loadStats();
-  }, []);
-
-  useEffect(() => {
-    Animated.spring(editAnim, {
-      toValue: editing ? 1 : 0,
-      useNativeDriver: false,
-      speed: 20,
-      bounciness: 4,
-    }).start();
+    Animated.parallel([
+      Animated.spring(editH,  { toValue: editing ? 1 : 0, useNativeDriver: false, speed: 18, bounciness: 3 }),
+      Animated.timing(editOp, { toValue: editing ? 1 : 0, duration: 220, useNativeDriver: false }),
+    ]).start();
   }, [editing]);
 
-  const loadStats = async () => {
+  // ── Load stats on focus ───────────────────────────────────────────────────
+  const loadStats = useCallback(async () => {
+    setLoadingStats(true);
     try {
-      const [remData, friendsData] = await Promise.all([
-        getReminders().catch(() => []),
-        getAcceptedFriends().catch(() => []),
+      const [remData, friendData] = await Promise.allSettled([
+        getReminders(),
+        getAcceptedFriends(),
       ]);
-      const reminders  = Array.isArray(remData)    ? remData    : (remData?.reminders    || remData?.data    || []);
-      const friends    = Array.isArray(friendsData) ? friendsData : (friendsData?.friends || friendsData?.data || []);
-      const completed  = reminders.filter((r) => r.completed || r.status === 'completed').length;
-      setStats({ reminders: reminders.length, friends: friends.length, completed });
-    } catch (e) {
-      console.error('Stats error:', e);
-    }
-  };
 
+      const rems = remData.status === 'fulfilled'
+        ? (Array.isArray(remData.value) ? remData.value : remData.value?.reminders || remData.value?.data || [])
+        : [];
+
+      const friends = friendData.status === 'fulfilled'
+        ? (Array.isArray(friendData.value) ? friendData.value : friendData.value?.friends || friendData.value?.data || [])
+        : [];
+
+      const completed = rems.filter(r => r.completed || r.status === 'completed').length;
+
+      // Streak
+      const doneSet = new Set(
+        rems.filter(r => r.completed && (r.completed_at || r.updated_at))
+          .map(r => { const d = new Date(r.completed_at || r.updated_at); d.setHours(0,0,0,0); return d.getTime(); })
+      );
+      let streak = 0;
+      const cur = new Date(); cur.setHours(0,0,0,0);
+      while (doneSet.has(cur.getTime())) { streak++; cur.setDate(cur.getDate() - 1); }
+
+      setStats({ reminders: rems.length, completed, friends: friends.length, streak });
+    } catch (e) {
+      console.error('Profile stats error:', e);
+    } finally {
+      setLoadingStats(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => { loadStats(); }, [loadStats]));
+
+  // ── Save profile ─────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!user?.id) return;
     setSaving(true);
     try {
-      const updated = await updateProfile(user.id, {
+      await updateProfile(user.id, {
         name:  form.name.trim(),
         bio:   form.bio.trim(),
         phone: form.phone.trim(),
@@ -165,258 +260,312 @@ export default function ProfileScreen() {
       updateUser({ name: form.name.trim(), bio: form.bio.trim(), phone: form.phone.trim() });
       setEditing(false);
     } catch (e) {
-      Alert.alert('Error', e?.response?.data?.errors?.join(', ') || 'Could not save profile');
+      Alert.alert('Could not save', e?.response?.data?.errors?.join(', ') || 'Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
+  const handleCancelEdit = () => {
+    setForm({ name: user?.name||'', email: user?.email||'', bio: user?.bio||user?.description||'', phone: user?.phone||'' });
+    setEditing(false);
+  };
+
   const handleLogout = () => {
-    Alert.alert(
-      'Sign out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign out', style: 'destructive', onPress: doLogout },
-      ]
-    );
+    Alert.alert('Sign out', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: doLogout },
+    ]);
   };
 
   const displayName = form.name || user?.name || user?.email?.split('@')[0] || 'You';
-  const joinDate = user?.created_at
+  const joinDate    = user?.created_at
     ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     : null;
 
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
+  const scoreColor = stats.completed && stats.reminders
+    ? stats.completed / stats.reminders >= 0.7 ? C.sage
+    : stats.completed / stats.reminders >= 0.4 ? C.amber : C.rose
+    : C.inkMid;
 
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Profile</Text>
-        <TouchableOpacity
-          style={[styles.editBtn, editing && styles.editBtnActive]}
-          onPress={() => editing ? handleSave() : setEditing(true)}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color={editing ? '#fff' : colors.primary} />
-          ) : (
-            <>
-              <Ionicons
-                name={editing ? 'checkmark' : 'pencil-outline'}
-                size={15}
-                color={editing ? '#fff' : colors.primary}
-              />
-              <Text style={[styles.editBtnTxt, editing && styles.editBtnTxtActive]}>
-                {editing ? 'Save' : 'Edit'}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+  return (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
+
+      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
+      <View style={[top.bar, { paddingTop: insets.top + 8, borderBottomColor: C.border, backgroundColor: C.bg }]}>
+        <Text style={[top.title, { color: C.ink }]}>Profile</Text>
+        <View style={top.actions}>
+          {/* Dark mode toggle in header */}
+          <TouchableOpacity
+            style={[top.iconBtn, { backgroundColor: C.surface, borderColor: C.border }]}
+            onPress={toggleTheme}
+          >
+            <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={18} color={isDark ? C.amber : C.violet} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[top.editBtn, editing && { backgroundColor: C.sage, borderColor: C.sage }]}
+            onPress={() => editing ? handleSave() : setEditing(true)}
+            disabled={saving}
+          >
+            {saving
+              ? <ActivityIndicator size="small" color={editing ? '#000' : C.sage} />
+              : <>
+                  <Ionicons name={editing ? 'checkmark' : 'pencil-outline'} size={15} color={editing ? '#000' : C.sage} />
+                  <Text style={[top.editTxt, { color: editing ? '#000' : C.sage }]}>
+                    {editing ? 'Save' : 'Edit'}
+                  </Text>
+                </>
+            }
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}
+        contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
       >
-        {/* ── Hero / Avatar ── */}
-        <View style={styles.hero}>
-          <View style={styles.heroBg} />
-          <BigAvatar name={displayName} size={88} />
-          <Text style={styles.heroName}>{displayName}</Text>
-          <Text style={styles.heroEmail}>{user?.email || ''}</Text>
-          {(user?.bio || form.bio) && !editing && (
-            <Text style={styles.heroBio}>{form.bio || user?.bio}</Text>
-          )}
+        {/* ── Hero ──────────────────────────────────────────────────────────── */}
+        <View style={[hero.wrap, { backgroundColor: C.surface, borderBottomColor: C.border }]}>
+          {/* Glow backdrop */}
+          <View style={[hero.glow, { backgroundColor: `hsla(${avatarHue(displayName)},60%,55%,${isDark ? 0.08 : 0.05})` }]} />
+
+          <Avatar name={displayName} size={90} C={C} />
+
+          <Text style={[hero.name, { color: C.ink }]}>{displayName}</Text>
+          <Text style={[hero.email, { color: C.inkMid }]}>{user?.email || ''}</Text>
+
+          {form.bio ? (
+            <Text style={[hero.bio, { color: C.inkMid }]}>{form.bio}</Text>
+          ) : null}
+
           {joinDate && (
-            <View style={styles.joinRow}>
-              <Ionicons name="calendar-outline" size={12} color={colors.textMuted} />
-              <Text style={styles.joinTxt}>Joined {joinDate}</Text>
+            <View style={hero.joinRow}>
+              <Ionicons name="leaf-outline" size={12} color={C.sage} />
+              <Text style={[hero.joinTxt, { color: C.sage }]}>Member since {joinDate}</Text>
             </View>
           )}
         </View>
 
-        {/* ── Stats ── */}
-        <View style={styles.statsRow}>
-          <StatCard icon="alarm-outline"         value={stats.reminders} label="Reminders" color={colors.primary} />
-          <StatCard icon="checkmark-circle-outline" value={stats.completed} label="Completed"  color="#6B9E78" />
-          <StatCard icon="people-outline"         value={stats.friends}   label="Friends"    color="#5B8DEF" />
+        {/* ── Stats ─────────────────────────────────────────────────────────── */}
+        <View style={[stat.wrap, { backgroundColor: C.surface, borderColor: C.border }]}>
+          <StatPill icon="alarm-outline"            value={stats.reminders} label="Reminders" color={C.sky}    C={C} />
+          <View style={[stat.div, { backgroundColor: C.border }]} />
+          <StatPill icon="checkmark-circle-outline" value={stats.completed} label="Completed" color={C.sage}   C={C} />
+          <View style={[stat.div, { backgroundColor: C.border }]} />
+          <StatPill icon="people-outline"           value={stats.friends}   label="Friends"   color={C.violet} C={C} />
+          <View style={[stat.div, { backgroundColor: C.border }]} />
+          <StatPill icon="flame-outline"            value={stats.streak}    label="Streak"    color={C.amber}  C={C} />
         </View>
 
-        {/* ── Edit form ── */}
-        {editing && (
-          <Animated.View style={[styles.editSection, {
-            opacity: editAnim,
-            transform: [{ translateY: editAnim.interpolate({ inputRange: [0,1], outputRange: [20,0] }) }],
-          }]}>
-            <Text style={styles.sectionTitle}>Edit Profile</Text>
-            <View style={styles.editCard}>
-              <EditField
-                label="Name"
-                icon="person-outline"
-                value={form.name}
-                onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
-                placeholder="Your full name"
-              />
-              <EditField
-                label="Phone"
-                icon="call-outline"
-                value={form.phone}
-                onChangeText={(t) => setForm((f) => ({ ...f, phone: t }))}
-                placeholder="+1 234 567 8900"
-              />
-              <EditField
-                label="Bio"
-                icon="chatbubble-ellipses-outline"
-                value={form.bio}
-                onChangeText={(t) => setForm((f) => ({ ...f, bio: t }))}
-                placeholder="Tell people a bit about yourself…"
-                multiline
-              />
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditing(false)}>
-                <Text style={styles.cancelTxt}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={{ paddingHorizontal: 16, paddingTop: 20 }}>
+
+          {/* ── Edit form ────────────────────────────────────────────────────── */}
+          <Animated.View style={{ opacity: editOp, maxHeight: editH.interpolate({ inputRange:[0,1], outputRange:[0, 600] }), overflow: 'hidden', marginBottom: editing ? 20 : 0 }}>
+            <SectionCard title="Edit Profile" C={C}>
+              <View style={{ padding: 16 }}>
+                <Field label="Name"  icon="person-outline"             value={form.name}  onChange={t => setForm(f=>({...f,name:t}))}  placeholder="Your full name"       C={C} />
+                <Field label="Phone" icon="call-outline"               value={form.phone} onChange={t => setForm(f=>({...f,phone:t}))} placeholder="+254 7XX XXX XXX"     C={C} />
+                <Field label="Bio"   icon="chatbubble-ellipses-outline" value={form.bio}   onChange={t => setForm(f=>({...f,bio:t}))}   placeholder="A short bio…" multiline C={C} />
+                <Field label="Email" icon="mail-outline"               value={form.email} editable={false} placeholder="Email"         C={C} />
+                <TouchableOpacity
+                  onPress={handleCancelEdit}
+                  style={{ alignItems: 'center', paddingVertical: 12, marginTop: 4 }}
+                >
+                  <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: C.inkDim }}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </SectionCard>
           </Animated.View>
-        )}
 
-        {/* ── Account ── */}
-        <Section title="Account">
-          <MenuRow icon="person-outline"    label="Name"          value={displayName}       color={colors.primary} isLast={false} />
-          <MenuRow icon="mail-outline"      label="Email"         value={user?.email || '—'} color="#5B8DEF" isLast={false} />
-          <MenuRow icon="call-outline"      label="Phone"         value={form.phone || '—'} color="#6B9E78" isLast={false} />
-          <MenuRow icon="lock-closed-outline" label="Password"    value="••••••••"           color={colors.warning} onPress={() => Alert.alert('Change Password', 'Password change coming soon.')} isLast />
-        </Section>
+          {/* ── Account ──────────────────────────────────────────────────────── */}
+          <SectionCard title="Account" C={C}>
+            <SettingRow icon="person-outline"       label="Name"     value={displayName}       color={C.sky}    C={C} isLast={false} />
+            <SettingRow icon="mail-outline"         label="Email"    value={user?.email || '—'} color={C.violet} C={C} isLast={false} />
+            <SettingRow icon="call-outline"         label="Phone"    value={form.phone || '—'} color={C.sage}   C={C} isLast={false} />
+            <SettingRow
+              icon="lock-closed-outline"
+              label="Change Password"
+              subtitle="Update your password"
+              color={C.amber}
+              C={C}
+              isLast
+              onPress={() => Alert.alert('Change Password', 'A reset link will be sent to your email.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Send link', onPress: () => {} },
+              ])}
+            />
+          </SectionCard>
 
-        {/* ── Preferences ── */}
-        <Section title="Preferences">
-          <MenuRow
-            icon="notifications-outline"
-            label="Push Notifications"
-            color="#E09F3E"
-            isLast={false}
-            rightElement={
-              <Switch
-                value={notifEnabled}
-                onValueChange={setNotifEnabled}
-                trackColor={{ false: colors.border, true: colors.primaryLight }}
-                thumbColor={notifEnabled ? colors.primary : colors.textMuted}
-              />
-            }
-          />
-          <MenuRow icon="moon-outline"    label="Dark Mode"    color="#9B6FE6" isLast={false}
-            rightElement={<Text style={styles.comingSoon}>Soon</Text>}
-          />
-          <MenuRow icon="language-outline" label="Language"    color="#5B8DEF" value="English" isLast />
-        </Section>
+          {/* ── Preferences ──────────────────────────────────────────────────── */}
+          <SectionCard title="Preferences" C={C}>
+            <SettingRow
+              icon={isDark ? 'moon' : 'sunny'}
+              label="Dark Mode"
+              subtitle={isDark ? 'Currently dark' : 'Currently light'}
+              color={isDark ? C.violet : C.amber}
+              C={C}
+              isLast={false}
+              rightEl={
+                <Switch
+                  value={isDark}
+                  onValueChange={v => useThemeStore.getState().setDark(v)}
+                  trackColor={{ false: C.border, true: C.violet + '80' }}
+                  thumbColor={isDark ? C.violet : C.inkDim}
+                />
+              }
+            />
+            <SettingRow
+              icon="notifications-outline"
+              label="Push Notifications"
+              subtitle={notifs ? 'Enabled' : 'Disabled'}
+              color={C.amber}
+              C={C}
+              isLast={false}
+              rightEl={
+                <Switch
+                  value={notifs}
+                  onValueChange={setNotifs}
+                  trackColor={{ false: C.border, true: C.sage + '60' }}
+                  thumbColor={notifs ? C.sage : C.inkDim}
+                />
+              }
+            />
+            <SettingRow icon="language-outline" label="Language" value="English" color={C.sky}   C={C} isLast={false} />
+            <SettingRow icon="time-outline"     label="Timezone" value="Auto"    color={C.inkMid} C={C} isLast />
+          </SectionCard>
 
-        {/* ── Support ── */}
-        <Section title="Support">
-          <MenuRow icon="help-circle-outline" label="Help & FAQ"      color={colors.primary} onPress={() => {}} isLast={false} />
-          <MenuRow icon="shield-checkmark-outline" label="Privacy Policy" color="#6B9E78"    onPress={() => {}} isLast={false} />
-          <MenuRow icon="document-text-outline"    label="Terms of Use"  color={colors.textSecondary} onPress={() => {}} isLast />
-        </Section>
+          {/* ── Activity ─────────────────────────────────────────────────────── */}
+          <SectionCard title="Activity" C={C}>
+            <SettingRow
+              icon="checkmark-done-outline"
+              label="Completed Tasks"
+              subtitle="View all your completed reminders"
+              color={C.sage}
+              C={C}
+              isLast={false}
+              onPress={() => navigation?.navigate('RemindersTab', { screen: 'CompletedTasks' })}
+            />
+            <SettingRow
+              icon="people-outline"
+              label="Friends"
+              subtitle="Manage your connections"
+              color={C.sky}
+              C={C}
+              isLast={false}
+              onPress={() => navigation?.navigate('SocialTab', { screen: 'Friends' })}
+            />
+            <SettingRow
+              icon="mail-unread-outline"
+              label="Invitations"
+              subtitle="Pending task invites"
+              color={C.amber}
+              C={C}
+              isLast
+              onPress={() => navigation?.navigate('RemindersTab', { screen: 'Invitations' })}
+            />
+          </SectionCard>
 
-        {/* ── Danger zone ── */}
-        <Section title="Account Actions">
-          <MenuRow
-            icon="log-out-outline"
-            label="Sign Out"
-            color={colors.error}
-            danger
-            onPress={handleLogout}
-            isLast
-          />
-        </Section>
+          {/* ── Support ──────────────────────────────────────────────────────── */}
+          <SectionCard title="Support" C={C}>
+            <SettingRow
+              icon="help-circle-outline"
+              label="Help & FAQ"
+              color={C.sky}
+              C={C}
+              isLast={false}
+              onPress={() => Linking.openURL('https://remind.app/help')}
+            />
+            <SettingRow
+              icon="shield-checkmark-outline"
+              label="Privacy Policy"
+              color={C.sage}
+              C={C}
+              isLast={false}
+              onPress={() => Linking.openURL('https://remind.app/privacy')}
+            />
+            <SettingRow
+              icon="document-text-outline"
+              label="Terms of Use"
+              color={C.inkMid}
+              C={C}
+              isLast
+              onPress={() => Linking.openURL('https://remind.app/terms')}
+            />
+          </SectionCard>
 
-        <Text style={styles.version}>Timo v1.0.0</Text>
+          {/* ── Danger ───────────────────────────────────────────────────────── */}
+          <SectionCard title="Account Actions" C={C}>
+            <SettingRow
+              icon="log-out-outline"
+              label="Sign Out"
+              subtitle="You'll need to log in again"
+              color={C.rose}
+              C={C}
+              danger
+              isLast
+              onPress={handleLogout}
+            />
+          </SectionCard>
+
+          {/* Version */}
+          <View style={{ alignItems: 'center', paddingVertical: 12, gap: 4 }}>
+            <View style={[ver.dot, { backgroundColor: C.sage }]} />
+            <Text style={{ fontFamily: fonts.sans, fontSize: 12, color: C.inkDim }}>
+              Timo v1.0.0 · remind
+            </Text>
+          </View>
+
+        </View>
       </ScrollView>
     </View>
   );
 }
 
-// ── Stat card styles ──────────────────────────────────────────────────────────
-const sc = StyleSheet.create({
-  card:     { flex: 1, alignItems: 'center', gap: 4, padding: spacing.sm },
-  iconWrap: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  value:    { fontFamily: fonts.serifBold, fontSize: 22, color: colors.textPrimary, letterSpacing: -0.5 },
-  label:    { fontFamily: fonts.sans, fontSize: 11, color: colors.textMuted, textAlign: 'center' },
-});
-
-// ── Section styles ────────────────────────────────────────────────────────────
-const sec = StyleSheet.create({
-  wrap:  { paddingHorizontal: spacing.md, marginBottom: spacing.md },
-  title: { fontFamily: fonts.sansMedium, fontSize: 12, color: colors.textMuted, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: spacing.sm, paddingLeft: 2 },
-  card:  { backgroundColor: colors.bgCard, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
-});
-
-// ── Menu row styles ───────────────────────────────────────────────────────────
-const mr = StyleSheet.create({
-  row:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 14, gap: spacing.sm },
-  rowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  iconWrap:  { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  label:     { flex: 1, fontFamily: fonts.sans, fontSize: 15, color: colors.textPrimary },
-  right:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  value:     { fontFamily: fonts.sans, fontSize: 14, color: colors.textMuted },
-});
-
-// ── Edit field styles ─────────────────────────────────────────────────────────
-const ef = StyleSheet.create({
-  wrap:         { marginBottom: spacing.sm },
-  label:        { fontFamily: fonts.sansMedium, fontSize: 12, color: colors.textMuted, letterSpacing: 0.3, marginBottom: 6, paddingLeft: 2 },
-  inputWrap:    { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bgInput, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  inputFocused: { borderColor: colors.primary, backgroundColor: colors.bgCard },
-  input:        { flex: 1, fontFamily: fonts.sans, fontSize: 15, color: colors.textPrimary, paddingHorizontal: 12, paddingVertical: 12 },
-});
-
-// ── Main styles ───────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-
-  header: {
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const top = StyleSheet.create({
+  bar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    paddingHorizontal: 20, paddingBottom: 12,
+    borderBottomWidth: 1,
   },
-  headerTitle: { fontFamily: fonts.serif, fontSize: 28, color: colors.textPrimary, letterSpacing: -0.3 },
+  title:   { fontFamily: fonts.serifBold, fontSize: 28, letterSpacing: -0.8 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconBtn: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   editBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: spacing.md, paddingVertical: 8,
-    borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 1, borderColor: colors.primary + '40',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 99, borderWidth: 1, borderColor: 'rgba(74,222,128,0.4)',
+    backgroundColor: 'rgba(74,222,128,0.1)',
   },
-  editBtnActive:   { backgroundColor: colors.primary },
-  editBtnTxt:      { fontFamily: fonts.sansMedium, fontSize: 13, color: colors.primary },
-  editBtnTxtActive:{ color: '#fff' },
+  editTxt: { fontFamily: fonts.sansMedium, fontSize: 13 },
+});
 
-  scroll: { paddingTop: 0 },
-
-  hero: { alignItems: 'center', paddingBottom: spacing.lg, paddingHorizontal: spacing.md },
-  heroBg: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 80,
-    backgroundColor: colors.primaryLight, borderBottomLeftRadius: radius.xl, borderBottomRightRadius: radius.xl,
+const hero = StyleSheet.create({
+  wrap: {
+    alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20,
+    borderBottomWidth: 1, overflow: 'hidden', gap: 6,
   },
-  heroName:  { fontFamily: fonts.serifBold, fontSize: 24, color: colors.textPrimary, marginTop: spacing.sm, letterSpacing: -0.3 },
-  heroEmail: { fontFamily: fonts.sans, fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  heroBio:   { fontFamily: fonts.sans, fontSize: 14, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm, lineHeight: 20, paddingHorizontal: spacing.lg },
-  joinRow:   { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.sm },
-  joinTxt:   { fontFamily: fonts.sans, fontSize: 12, color: colors.textMuted },
-
-  statsRow: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.md, marginBottom: spacing.md,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
-    paddingVertical: spacing.md,
+  glow: {
+    position: 'absolute', top: -40, width: 200, height: 200,
+    borderRadius: 100,
   },
+  name:    { fontFamily: fonts.serifBold, fontSize: 26, letterSpacing: -0.8, marginTop: 12 },
+  email:   { fontFamily: fonts.sans, fontSize: 13 },
+  bio:     { fontFamily: fonts.sans, fontSize: 14, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24, marginTop: 4 },
+  joinRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, backgroundColor: 'rgba(74,222,128,0.1)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99 },
+  joinTxt: { fontFamily: fonts.sansMedium, fontSize: 11 },
+});
 
-  sectionTitle: { fontFamily: fonts.sansMedium, fontSize: 12, color: colors.textMuted, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: spacing.sm, paddingLeft: 2 },
-  editSection: { paddingHorizontal: spacing.md, marginBottom: spacing.md },
-  editCard: { backgroundColor: colors.bgCard, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
-  cancelBtn: { marginTop: spacing.sm, alignItems: 'center', padding: spacing.sm },
-  cancelTxt: { fontFamily: fonts.sans, fontSize: 14, color: colors.textMuted },
+const stat = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 16, marginTop: 16,
+    borderRadius: 18, borderWidth: 1, padding: 16, gap: 4,
+  },
+  div: { width: 1, alignSelf: 'stretch', marginHorizontal: 4 },
+});
 
-  comingSoon: { fontFamily: fonts.sans, fontSize: 12, color: colors.textMuted, backgroundColor: colors.bgInput, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full },
-  version:    { fontFamily: fonts.sans, fontSize: 12, color: colors.textMuted, textAlign: 'center', paddingTop: spacing.md },
+const ver = StyleSheet.create({
+  dot: { width: 6, height: 6, borderRadius: 3 },
 });

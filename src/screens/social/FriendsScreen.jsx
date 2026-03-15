@@ -241,9 +241,12 @@ export default function FriendsScreen({ navigation }) {
     finally { setActing(null); }
   };
 
-  const handleChat = async (friend) => {
-    const friendId = friend.friend?.id || friend.id;
-    navigation.navigate('Chat', { friendId, friendName: friend.friend?.name || friend.name });
+  const handleChat = (friend) => {
+    const userId = friend.friend?.id || friend.id;
+    const name   = friend.friend?.name || friend.name || 'Friend';
+    console.log('[FriendsScreen] handleChat — raw friend:', JSON.stringify(friend));
+    console.log('[FriendsScreen] → Chat with userId:', userId, 'name:', name);
+    navigation.navigate('Chat', { userId, name });
   };
 
   const tabW = `${100 / TABS.length}%`;
