@@ -66,18 +66,18 @@ export default function LoginScreen({ navigation }) {
   };
 
   const handleLogin = async () => {
-    if (!validate()) return;
-    setLoading(true);
-    try {
-      await requestLogin({ email: email.trim().toLowerCase(), password });
-      // Navigation handled by authStore + navigator (otpPending → OTPScreen)
-    } catch (err) {
-      const msg = err?.response?.data?.errors?.join(', ') || 'Invalid email or password';
-      Toast.show({ type: 'error', text1: 'Login failed', text2: msg });
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (!validate()) return;
+  setLoading(true);
+  try {
+    await requestLogin({ email: email.trim().toLowerCase(), password });
+    navigation.navigate('OTP'); // ← add it here, inside the try block
+  } catch (err) {
+    const msg = err?.response?.data?.errors?.join(', ') || 'Invalid email or password';
+    Toast.show({ type: 'error', text1: 'Login failed', text2: msg });
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <View style={styles.screen}>

@@ -23,31 +23,31 @@ const useAuthStore = create((set, get) => ({
 
   // ── INITIALIZE ────────────────────────────────────────────────
   initialize: async () => {
-    set({ isLoading: true });
-    try {
-      const accessToken = await AsyncStorage.getItem('access-token');
-      const userJson    = await AsyncStorage.getItem('user');
+  set({ isLoading: true });
+  try {
+    const accessToken = await AsyncStorage.getItem('access-token');
+    const userJson    = await AsyncStorage.getItem('user');
 
-      if (accessToken && userJson) {
-        try {
-          const response = await validateToken();
-          if (response.success) {
-            set({ user: response.data, isAuthenticated: true });
-          } else {
-            await clearAuthTokens();
-            set({ user: null, isAuthenticated: false });
-          }
-        } catch {
+    if (accessToken && userJson) {
+      try {
+        const response = await validateToken();
+        if (response.success) {
+          set({ user: response.data, isAuthenticated: true });
+        } else {
           await clearAuthTokens();
-          set({ user: null, isAuthenticated: false });
+          set({ user: null, isAuthenticated: false, otpPending: false, otpEmail: null }); // ← add these
         }
+      } catch {
+        await clearAuthTokens();
+        set({ user: null, isAuthenticated: false, otpPending: false, otpEmail: null }); // ← and here
       }
-    } catch (e) {
-      console.error('Auth init error:', e);
-    } finally {
-      set({ isLoading: false });
     }
-  },
+  } catch (e) {
+    console.error('Auth init error:', e);
+  } finally {
+    set({ isLoading: false });
+  }
+},
 
   // ── REGISTER ──────────────────────────────────────────────────
   register: async (data) => {

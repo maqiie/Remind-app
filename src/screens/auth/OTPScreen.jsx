@@ -21,27 +21,33 @@ import Button from '../../components/common/Button';
 import { colors, typography, fonts, spacing, radius, shadows } from '../../theme';
 
 const OTP_LENGTH = 6;
-const RESEND_COOLDOWN = 60; // seconds
+const RESEND_COOLDOWN = 60;
 
 // ── Single OTP digit cell ─────────────────────────────────────────────────────
+// Two nested Animated.Views: outer uses useNativeDriver:true (scale/transform),
+// inner uses useNativeDriver:false (borderColor/backgroundColor).
+// React Native forbids mixing both drivers on the same node.
 const OtpCell = ({ value, focused, hasError }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const scaleAnim       = useRef(new Animated.Value(1)).current;
   const borderColorAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: focused ? 1.08 : 1,
-        useNativeDriver: false,
-        speed: 50,
-        bounciness: 8,
-      }),
-      Animated.timing(borderColorAnim, {
-        toValue: focused ? 1 : 0,
-        duration: 150,
-        useNativeDriver: false,
-      }),
-    ]).start();
+    // Native driver — transform only
+    Animated.spring(scaleAnim, {
+      toValue: focused ? 1.06 : 1,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 8,
+    }).start();
+  }, [focused]);
+
+  useEffect(() => {
+    // JS driver — color interpolation only
+    Animated.timing(borderColorAnim, {
+      toValue: focused ? 1 : 0,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
   }, [focused]);
 
   const borderColor = borderColorAnim.interpolate({
@@ -61,43 +67,47 @@ const OtpCell = ({ value, focused, hasError }) => {
   });
 
   return (
-    <Animated.View
-      style={[
-        styles.otpCell,
-        {
-          borderColor,
-          backgroundColor: bgColor,
-          transform: [{ scale: scaleAnim }],
-        },
-        focused && shadows.sm,
-      ]}
-    >
-      <Text style={[styles.otpDigit, !value && styles.otpPlaceholder, hasError && styles.otpDigitError]}>
-        {value || (focused ? '' : '·')}
-      </Text>
+    // Outer: native driver (scale only — zero color props here)
+    <Animated.View style={[styles.otpCellOuter, { transform: [{ scale: scaleAnim }] }]}>
+      {/* Inner: JS driver (colors only — zero transform props here) */}
+      <Animated.View
+        style={[
+          styles.otpCell,
+          { borderColor, backgroundColor: bgColor },
+          focused && shadows.sm,
+        ]}
+      >
+        <Text style={[
+          styles.otpDigit,
+          !value && styles.otpPlaceholder,
+          hasError && styles.otpDigitError,
+        ]}>
+          {value || (focused ? '|' : '·')}
+        </Text>
+      </Animated.View>
     </Animated.View>
   );
 };
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function OTPScreen({ navigation }) {
-  const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
+  const [otp, setOtp]                   = useState(Array(OTP_LENGTH).fill(''));
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  const [hasError, setHasError] = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [resending, setResending]       = useState(false);
+  const [cooldown, setCooldown]         = useState(0);
+  const [hasError, setHasError]         = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
 
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
   const resendOtp = useAuthStore((s) => s.resendOtp);
   const cancelOtp = useAuthStore((s) => s.cancelOtp);
-  const otpEmail = useAuthStore((s) => s.otpEmail);
+  const otpEmail  = useAuthStore((s) => s.otpEmail);
 
-  const inputRefs = useRef(Array(OTP_LENGTH).fill(null).map(() => React.createRef()));
   const hiddenInputRef = useRef(null);
-  const timerRef = useRef(null);
+  const timerRef       = useRef(null);
 
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(28)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
@@ -106,15 +116,14 @@ export default function OTPScreen({ navigation }) {
       fadeAnim.setValue(0);
       slideAnim.setValue(28);
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 520, delay: 80, useNativeDriver: false }),
-        Animated.timing(slideAnim, { toValue: 0, duration: 520, delay: 80, useNativeDriver: false }),
+        Animated.timing(fadeAnim,  { toValue: 1, duration: 520, delay: 80, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 520, delay: 80, useNativeDriver: true }),
       ]).start();
-      // Auto-focus
-      setTimeout(() => hiddenInputRef.current?.focus(), 400);
+      const t = setTimeout(() => hiddenInputRef.current?.focus(), 500);
+      return () => clearTimeout(t);
     }, [])
   );
 
-  // Countdown timer
   useEffect(() => {
     if (cooldown <= 0) return;
     timerRef.current = setInterval(() => {
@@ -129,27 +138,22 @@ export default function OTPScreen({ navigation }) {
   const shake = () => {
     shakeAnim.setValue(0);
     Animated.sequence([
-      Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: false }),
-      Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: false }),
-      Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: false }),
-      Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: false }),
-      Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: false }),
+      Animated.timing(shakeAnim, { toValue: 10,  duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8,   duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8,  duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0,   duration: 55, useNativeDriver: true }),
     ]).start();
   };
 
   const handleOtpChange = (text) => {
-    // Strip non-digits and limit to OTP_LENGTH
     const digits = text.replace(/\D/g, '').slice(0, OTP_LENGTH).split('');
     const newOtp = Array(OTP_LENGTH).fill('');
     digits.forEach((d, i) => { newOtp[i] = d; });
     setOtp(newOtp);
     setHasError(false);
     setFocusedIndex(Math.min(digits.length, OTP_LENGTH - 1));
-
-    // Auto-submit when complete
-    if (digits.length === OTP_LENGTH) {
-      handleVerify(digits.join(''));
-    }
+    if (digits.length === OTP_LENGTH) handleVerify(digits.join(''));
   };
 
   const handleVerify = async (code) => {
@@ -159,16 +163,17 @@ export default function OTPScreen({ navigation }) {
     setHasError(false);
     try {
       await verifyOtp({ email: otpEmail, otp: otpCode });
-      // Navigation handled by navigator reacting to isAuthenticated
     } catch (err) {
       setHasError(true);
       shake();
-      const msg = err?.response?.data?.message || err?.response?.data?.error || 'Invalid or expired code';
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        'Invalid or expired code';
       Toast.show({ type: 'error', text1: 'Verification failed', text2: msg });
-      // Clear inputs
       setOtp(Array(OTP_LENGTH).fill(''));
       setFocusedIndex(0);
-      hiddenInputRef.current?.focus();
+      setTimeout(() => hiddenInputRef.current?.focus(), 100);
     } finally {
       setLoading(false);
     }
@@ -183,7 +188,7 @@ export default function OTPScreen({ navigation }) {
       setOtp(Array(OTP_LENGTH).fill(''));
       setFocusedIndex(0);
       setHasError(false);
-      hiddenInputRef.current?.focus();
+      setTimeout(() => hiddenInputRef.current?.focus(), 100);
       Toast.show({ type: 'success', text1: 'Code sent!', text2: `Check ${otpEmail}` });
     } catch {
       Toast.show({ type: 'error', text1: 'Failed to resend', text2: 'Please try again shortly.' });
@@ -192,10 +197,10 @@ export default function OTPScreen({ navigation }) {
     }
   };
 
-  const filledCount = otp.filter(Boolean).length;
+  const focusInput    = () => hiddenInputRef.current?.focus();
+  const filledCount   = otp.filter(Boolean).length;
   const progressWidth = (filledCount / OTP_LENGTH) * 100;
 
-  // Mask email for display
   const maskedEmail = otpEmail
     ? otpEmail.replace(/(.{2})(.*)(@.*)/, (_, a, b, c) => a + '*'.repeat(Math.max(b.length, 3)) + c)
     : '';
@@ -204,9 +209,27 @@ export default function OTPScreen({ navigation }) {
     <View style={styles.screen}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
 
+      {/* Hidden input — off-screen so Android can focus it reliably */}
+      <TextInput
+        ref={hiddenInputRef}
+        style={styles.hiddenInput}
+        value={otp.join('')}
+        onChangeText={handleOtpChange}
+        keyboardType="number-pad"
+        maxLength={OTP_LENGTH}
+        caretHidden
+        onFocus={() => setIsInputFocused(true)}
+        onBlur={() => setIsInputFocused(false)}
+        autoCorrect={false}
+        autoComplete="one-time-code"
+        textContentType="oneTimeCode"
+        importantForAccessibility="no-hide-descendants"
+      />
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -224,8 +247,10 @@ export default function OTPScreen({ navigation }) {
           </Animated.View>
 
           {/* Header */}
-          <Animated.View style={[styles.headerSection, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-            {/* Icon */}
+          <Animated.View style={[
+            styles.headerSection,
+            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+          ]}>
             <View style={styles.iconCircle}>
               <Ionicons name="mail-unread-outline" size={28} color={colors.primary} />
             </View>
@@ -238,38 +263,39 @@ export default function OTPScreen({ navigation }) {
           </Animated.View>
 
           {/* Card */}
-          <Animated.View style={[styles.card, shadows.md, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-            {/* Hidden full-width input captures keyboard */}
-            <TextInput
-              ref={hiddenInputRef}
-              style={styles.hiddenInput}
-              value={otp.join('')}
-              onChangeText={handleOtpChange}
-              keyboardType="number-pad"
-              maxLength={OTP_LENGTH}
-              autoFocus={false}
-            />
-
+          <Animated.View style={[
+            styles.card,
+            shadows.md,
+            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+          ]}>
             {/* OTP Cells */}
             <TouchableOpacity
               activeOpacity={1}
-              onPress={() => hiddenInputRef.current?.focus()}
+              onPress={focusInput}
+              style={styles.otpTouchArea}
             >
-              <Animated.View style={[styles.otpRow, { transform: [{ translateX: shakeAnim }] }]}>
+              <Animated.View style={[
+                styles.otpRow,
+                { transform: [{ translateX: shakeAnim }] },
+              ]}>
                 {otp.map((digit, i) => (
                   <OtpCell
                     key={i}
                     value={digit}
-                    focused={focusedIndex === i}
+                    focused={isInputFocused && focusedIndex === i}
                     hasError={hasError}
                   />
                 ))}
               </Animated.View>
+
+              {!isInputFocused && (
+                <Text style={styles.tapHint}>Tap to enter code</Text>
+              )}
             </TouchableOpacity>
 
             {/* Progress bar */}
             <View style={styles.progressTrack}>
-              <Animated.View style={[styles.progressBar, { width: `${progressWidth}%` }]} />
+              <View style={[styles.progressBar, { width: `${progressWidth}%` }]} />
             </View>
 
             {hasError && (
@@ -288,27 +314,20 @@ export default function OTPScreen({ navigation }) {
               style={styles.verifyBtn}
             />
 
-            {/* Resend */}
             <View style={styles.resendRow}>
               <Text style={styles.resendLabel}>Didn't receive it? </Text>
-              <TouchableOpacity
-                onPress={handleResend}
-                disabled={cooldown > 0 || resending}
-              >
+              <TouchableOpacity onPress={handleResend} disabled={cooldown > 0 || resending}>
                 {cooldown > 0 ? (
-                  <Text style={styles.resendCooldown}>
-                    Resend in {cooldown}s
-                  </Text>
+                  <Text style={styles.resendCooldown}>Resend in {cooldown}s</Text>
                 ) : (
                   <Text style={[styles.resendLink, resending && { opacity: 0.5 }]}>
-                    {resending ? 'Sending...' : 'Resend code'}
+                    {resending ? 'Sending…' : 'Resend code'}
                   </Text>
                 )}
               </TouchableOpacity>
             </View>
           </Animated.View>
 
-          {/* Expiry note */}
           <Animated.View style={[styles.note, { opacity: fadeAnim }]}>
             <Ionicons name="time-outline" size={13} color={colors.textMuted} />
             <Text style={styles.noteText}>Code expires in 10 minutes</Text>
@@ -324,14 +343,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
+  hiddenInput: {
+    position: 'absolute',
+    top: -200,
+    left: 0,
+    right: 0,
+    height: 50,
+    color: 'transparent',
+    backgroundColor: 'transparent',
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
     paddingBottom: spacing.xxl,
   },
-
-  // Back
   backBtn: {
     width: 40,
     height: 40,
@@ -343,8 +369,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginBottom: spacing.xl,
   },
-
-  // Header
   headerSection: {
     marginBottom: spacing.xl,
   },
@@ -379,8 +403,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     color: colors.textPrimary,
   },
-
-  // Card
   card: {
     backgroundColor: colors.bgCard,
     borderRadius: radius.xl,
@@ -388,24 +410,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-
-  // Hidden input
-  hiddenInput: {
-    position: 'absolute',
-    opacity: 0,
-    width: 1,
-    height: 1,
+  otpTouchArea: {
+    marginBottom: spacing.md,
   },
-
-  // OTP cells
   otpRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: spacing.md,
+    gap: 8,
   },
+  // Outer wrapper carries the scale transform (native driver)
+  otpCellOuter: {
+    flex: 1,
+    maxWidth: 48,
+  },
+  // Inner carries border/background colors (JS driver)
   otpCell: {
-    width: 48,
-    height: 58,
+    aspectRatio: 0.82,
     borderRadius: radius.md,
     borderWidth: 1.5,
     alignItems: 'center',
@@ -413,19 +433,24 @@ const styles = StyleSheet.create({
   },
   otpDigit: {
     fontFamily: fonts.serif,
-    fontSize: 22,
+    fontSize: 20,
     color: colors.textPrimary,
     letterSpacing: 0,
   },
   otpPlaceholder: {
     color: colors.border,
-    fontSize: 18,
+    fontSize: 16,
   },
   otpDigitError: {
     color: colors.error,
   },
-
-  // Progress bar
+  tapHint: {
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: fonts.sans,
+  },
   progressTrack: {
     height: 3,
     backgroundColor: colors.bgInput,
@@ -438,8 +463,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: 2,
   },
-
-  // Error
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -454,13 +477,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.error,
   },
-
   verifyBtn: {
     marginTop: spacing.xs,
     marginBottom: spacing.md,
   },
-
-  // Resend
   resendRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -480,8 +500,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontFamily: fonts.sansMedium,
   },
-
-  // Note
   note: {
     flexDirection: 'row',
     alignItems: 'center',
