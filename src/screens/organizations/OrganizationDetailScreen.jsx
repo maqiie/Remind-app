@@ -63,15 +63,15 @@ export default function OrganizationDetailScreen({ route, navigation }) {
   useEffect(() => { load(); }, [id]);
 
   const load = useCallback(async () => {
-    try {
-      const data = await getOrganization(id);
-      const o    = data?.organization || data;
-      setOrg(o);
-      const mList = o?.memberships || o?.members || [];
-      setMembers(mList);
-    } catch {}
-    finally { setLoading(false); setRefreshing(false); }
-  }, [id]);
+  try {
+    const data = await getOrganization(id);
+    const o    = data?.organization || data;
+    setOrg(o);
+    const mList = data?.memberships || data?.members || [];
+    setMembers(mList);
+  } catch {}
+  finally { setLoading(false); setRefreshing(false); }
+}, [id]);
 
   const doSearch = async (q) => {
     if (!q.trim()) { setSearchRes([]); return; }

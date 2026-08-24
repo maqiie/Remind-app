@@ -39,10 +39,12 @@ export default function CreateOrganizationScreen({ navigation }) {
 
   const handleSave = async () => {
     if (!validate()) return;
+
     Animated.sequence([
       Animated.timing(saveScale, { toValue: 0.93, duration: 80, useNativeDriver: true }),
       Animated.spring(saveScale,  { toValue: 1,    speed: 30, bounciness: 10, useNativeDriver: true }),
     ]).start();
+
     setSaving(true);
     try {
       const payload = {
@@ -52,6 +54,7 @@ export default function CreateOrganizationScreen({ navigation }) {
         website:     form.website.trim() || undefined,
       };
       Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
       await createOrganization(payload);
       navigation.goBack();
     } catch (err) {
@@ -171,19 +174,16 @@ const s = StyleSheet.create({
   errorBanner:{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: colors.errorLight, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.error + '30' },
   errorBannerTxt:{ fontFamily: fonts.sans, fontSize: 13, color: colors.error, flex: 1 },
   fieldError: { fontFamily: fonts.sans, fontSize: 11.5, color: colors.error, marginTop: 4, paddingHorizontal: spacing.md },
-
   card:        { backgroundColor: colors.bgCard, borderRadius: 18, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, overflow: 'hidden' },
   nameInput:   { fontFamily: fonts.sansMedium, fontSize: 18, color: colors.textPrimary, padding: spacing.md, paddingBottom: 12 },
   cardDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: spacing.md },
   descInput:   { fontFamily: fonts.sans, fontSize: 14, color: colors.textPrimary, padding: spacing.md, minHeight: 80, textAlignVertical: 'top' },
-
   sectionLabel:{ fontFamily: fonts.sansMedium, fontSize: 10.5, color: colors.textMuted, letterSpacing: 0.9, textTransform: 'uppercase', marginBottom: 10, marginTop: 4 },
   chipGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   chip:        { paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgInput },
   chipOn:      { backgroundColor: colors.textPrimary, borderColor: colors.textPrimary },
   chipTxt:     { fontFamily: fonts.sans, fontSize: 13, color: colors.textSecondary },
   chipTxtOn:   { fontFamily: fonts.sansMedium, color: '#fff' },
-
   rowCard:     { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bgCard, borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md, paddingVertical: 13, gap: 10 },
   rowIcon:     { width: 34, height: 34, borderRadius: 10, backgroundColor: '#EBF1FD', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   rowInput:    { flex: 1, fontFamily: fonts.sans, fontSize: 15, color: colors.textPrimary, padding: 0 },

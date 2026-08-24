@@ -46,6 +46,7 @@ function OrgCard({ item, onPress, index }) {
 export default function OrganizationsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const fabAnim = useRef(new Animated.Value(0)).current;
+
   const [orgs,      setOrgs]      = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [refreshing,setRefreshing]= useState(false);
@@ -103,7 +104,7 @@ export default function OrganizationsScreen({ navigation }) {
             <OrgCard
               item={item}
               index={index}
-              onPress={() => navigation.navigate('OrgDetail', { id: item.id, org: item })}
+              onPress={() => navigation.navigate('OrgDetailScreen', { id: item.id, org: item })}
             />
           )}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + 110 }]}
@@ -120,7 +121,7 @@ export default function OrganizationsScreen({ navigation }) {
       )}
 
       <Animated.View style={[s.fab, { transform: [{ scale: fabAnim }], bottom: insets.bottom + 90 }]}>
-        <TouchableOpacity style={s.fabBtn} onPress={() => navigation.navigate('CreateOrg')} activeOpacity={0.85}>
+        <TouchableOpacity style={s.fabBtn} onPress={() => navigation.navigate('CreateOrgScreen')} activeOpacity={0.85}>
           <Ionicons name="add" size={28} color="#fff" />
         </TouchableOpacity>
       </Animated.View>
